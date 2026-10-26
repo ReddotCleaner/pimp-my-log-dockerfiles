@@ -1,6 +1,20 @@
-This repo is freely inspired from the awesome jfrazelle [repo](https://github.com/jfrazelle/dockerfiles).
+# syslogserver (Rsyslogd + PimpMyLog)
 
-This is a repo to hold various Dockerfiles for images I create.
+This repository only contains the **syslog server** container: rsyslogd receives
+syslog over UDP/514 and the logs are browsable through the
+[PimpMyLog](http://pimpmylog.com) web UI (nginx + php-fpm, supervised by supervisord).
 
-Almost all of these live on [dockerhub](https://hub.docker.com/r/pbertera/)
-You may also want to checkout my dotfiles, specifically the aliases for all these files which are [here](https://github.com/pbertera/dotfiles/blob/master/.dockerfunc).
+## Run
+
+    docker build -t syslogserver ./syslogserver
+    docker run -d --name syslogserver \
+      -e SYSLOG_USERNAME=admin \
+      -e SYSLOG_PASSWORD=1234 \
+      -p 8080:80 -p 514:514/udp \
+      -v /path/to/logs:/var/log/net \
+      syslogserver
+
+Credentials for the PimpMyLog UI are created from `SYSLOG_USERNAME` / `SYSLOG_PASSWORD`
+(see `syslogserver/create-user.php`). Point your devices at `<host>:514/udp`.
+
+See [syslogserver/README.md](syslogserver/README.md) for details.
