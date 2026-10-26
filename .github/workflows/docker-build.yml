@@ -76,6 +76,13 @@ jobs:
           docker exec syslogserver-test grep -q "UDP test from host" /var/log/net/syslog.log \
             || { echo "UDP line NOT ingested"; docker logs syslogserver-test; exit 1; }
 
+          # Control-char regression: TAB/CR must survive as-is, not as #011/#015
+          printf '<14>Oct 27 04:00:03 win-val tabs: A\tB\ttail\r\n' > /dev/tcp/127.0.0.1/1514
+          sleep 2
+          docker exec syslogserver-test grep -q '#011\|#015' /var/log/net/syslog.log \
+            && { echo "control chars escaped as #011/#015"; docker exec syslogserver-test od -c /var/log/net/syslog.log | tail -5; exit 1; }
+          docker exec syslogserver-test grep -qP 'A\tB\ttail' /var/log/net/syslog.log \
+            || { echo "TAB not preserved"; docker exec syslogserver-test od -c /var/log/net/syslog.log | tail -5; exit 1; }
           # UTF-8 regression (mbstring): non-ASCII must be stored and served unmangled
           printf '<14>Oct 27 04:00:02 win-val cn: 为新登录分配了特殊权限\n' > /dev/tcp/127.0.0.1/1514
           sleep 2

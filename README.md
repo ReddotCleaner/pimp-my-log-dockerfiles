@@ -136,6 +136,10 @@ login `302`, and that PimpMyLog actually parses the ingested lines (`count > 0`)
   correct UTF-8 into mojibake (`为新登录` → `ä¸ºæ°ç»å½`). The build now fails if mbstring is missing, and CI sends a
   Chinese line and asserts it comes back unmangled. If your client sends GBK/CP936 instead of UTF-8 the bytes are
   written as-is and will look wrong — fix it on the client (see the NXLog note below).
+- **`$EscapeControlCharactersOnReceive off`**: rsyslog's default is to rewrite control characters in received
+  messages, so a TAB arrives as the literal text `#011` and a CR as `#015` — which is what Windows event blocks look
+  like in the UI (`安全 ID:#011#011S-1-5-18`). Disabling it keeps the payload byte-accurate. Trade-off: an embedded
+  LF is no longer neutralised, so a client that sends multi-line messages without escaping will produce extra lines.
 - **`$MaxMessageSize 64k`** in `rsyslog.conf`: the rsyslog default is 8 KiB, which truncates long Windows event blocks
   (4624/4672 detail) and can cut a multi-byte character in half. Truncated lines are scrubbed with
   `iconv('UTF-8','UTF-8//IGNORE')` instead of being mojibaked wholesale.
