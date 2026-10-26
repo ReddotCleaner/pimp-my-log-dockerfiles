@@ -1,0 +1,110 @@
+name: Build syslogserver image
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "syslogserver/**"
+      - ".github/workflows/docker-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/reddotcleaner/pimp-my-log-dockerfiles
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./syslogserver
+          file: ./syslogserver/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Smoke test (TCP 514 + UDP 514 + web UI + login)
+        run: |
+          set -x
+          docker run -d --name syslogserver-test \
+            -e SYSLOG_USERNAME=admin -e SYSLOG_PASSWORD=test1234 \
+            -p 18080:80 -p 1514:514/tcp -p 1514:514/udp \
+            ghcr.io/reddotcleaner/pimp-my-log-dockerfiles:latest
+
+          for i in $(seq 1 40); do
+            docker exec syslogserver-test ss -tln 2>/dev/null | grep -q ':514 ' && break
+            sleep 2
+          done
+          echo "=== listeners inside container ==="
+          docker exec syslogserver-test ss -tuln | grep ':514' || true
+          docker exec syslogserver-test ss -tln | grep -q ':514 ' || { echo "TCP 514 NOT listening"; docker logs syslogserver-test; exit 1; }
+          docker exec syslogserver-test ss -uln | grep -q ':514 ' || { echo "UDP 514 NOT listening"; docker logs syslogserver-test; exit 1; }
+
+          # syslog ingest over both transports (NXLog-style RFC3164 with PRI prefix)
+          printf '<14>Oct 27 04:00:00 win-gaming NXLog: TCP test from host\n' > /dev/tcp/127.0.0.1/1514 \
+            || { echo "TCP 1514 refused"; docker logs syslogserver-test; exit 1; }
+          printf '<14>Oct 27 04:00:01 win-gaming NXLog: UDP test from host\n' | nc -u -w1 127.0.0.1 1514 || true
+          sleep 3
+          echo "=== log file ==="
+          docker exec syslogserver-test cat /var/log/net/syslog.log || true
+          docker exec syslogserver-test grep -q "TCP test from host" /var/log/net/syslog.log \
+            || { echo "TCP line NOT ingested"; docker logs syslogserver-test; exit 1; }
+          docker exec syslogserver-test grep -q "UDP test from host" /var/log/net/syslog.log \
+            || { echo "UDP line NOT ingested"; docker logs syslogserver-test; exit 1; }
+
+          # web UI
+          code=""
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /tmp/ui.html -w '%{http_code}' http://127.0.0.1:18080/index.php || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          echo "web UI HTTP status: $code"
+          if [ "$code" != "200" ] || ! grep -q "Pimp my Log" /tmp/ui.html; then
+            echo "web UI FAILED"
+            docker exec syslogserver-test cat /var/log/nginx/error.log || true
+            docker logs syslogserver-test
+            exit 1
+          fi
+
+          # login (needs variables_order=GPCSE, otherwise $_ENV is empty and no user exists)
+          rm -f /tmp/cj.txt
+          csrf=$(curl -s -c /tmp/cj.txt http://127.0.0.1:18080/index.php | grep -o 'name="csrf_token" value="[^"]*"' | sed 's/.*value="//;s/"//')
+          lcode=$(curl -s -b /tmp/cj.txt -c /tmp/cj.txt -o /dev/null -w '%{http_code}' \
+            -d "username=admin&password=test1234&csrf_token=$csrf&attempt=1" "http://127.0.0.1:18080/index.php?")
+          echo "login POST -> HTTP $lcode"
+          [ "$lcode" = "302" ] || { echo "login FAILED"; docker logs syslogserver-test; exit 1; }
+
+          app=$(curl -s -b /tmp/cj.txt http://127.0.0.1:18080/index.php)
+          csrf2=$(echo "$app" | grep -o 'csrf_token *= *"[^"]*"' | head -1 | sed 's/.*"\(.*\)"/\1/')
+          resp=$(curl -s -b /tmp/cj.txt -d "file=syslog&max=10&ldv=1&reset=1&filesize=0&csrf_token=$csrf2" \
+            http://127.0.0.1:18080/inc/getlog.pml.php)
+          echo "getlog: $(echo "$resp" | head -c 200)"
+          echo "$resp" | grep -q '"count":[1-9]' || { echo "PimpMyLog parsed 0 lines"; docker logs syslogserver-test; exit 1; }
+
+          docker stop syslogserver-test
+          docker rm syslogserver-test

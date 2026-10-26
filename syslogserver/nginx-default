@@ -66,9 +66,15 @@ server {
     #   # With php5-cgi alone:
     #   fastcgi_pass 127.0.0.1:9000;
     #   # With php5-fpm:
-        fastcgi_pass unix:/var/run/php5-fpm.sock;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
         fastcgi_index index.php;
         include fastcgi_params;
+        # fastcgi_params does NOT define SCRIPT_FILENAME (that is in fastcgi.conf);
+        # without this line php-fpm cannot locate the script and nginx returns 502.
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        # keep PATH_INFO from fastcgi_split_path_info (reset by fastcgi_params)
+        set $path_info $fastcgi_path_info;
+        fastcgi_param PATH_INFO $path_info;
     }
 
     # deny access to .htaccess files, if Apache's document root
