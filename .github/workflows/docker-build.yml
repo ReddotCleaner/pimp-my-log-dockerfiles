@@ -111,8 +111,10 @@ jobs:
             http://127.0.0.1:18080/inc/getlog.pml.php)
           echo "getlog: $(echo "$resp" | head -c 200)"
           echo "$resp" | grep -q '"count":[1-9]' || { echo "PimpMyLog parsed 0 lines"; docker logs syslogserver-test; exit 1; }
-          echo "$resp" | grep -q '为新登录' || { echo "UTF-8 mangled by PimpMyLog (mojibake)"; echo "$resp" | head -c 400; exit 1; }
-          if echo "$resp" | grep -q 'ä¸º'; then echo "mojibake detected in API output"; exit 1; fi
+          # PimpMyLog serves JSON with \uXXXX escapes; decode and assert the Chinese
+          # survives intact (no mojibake) all the way through the API.
+          echo "$resp" | python3 -c 'import json,sys; t=json.dumps(json.load(sys.stdin),ensure_ascii=False); ok=("为新登录" in t) and ("ä¸º" not in t); print("UTF-8 through API:", "OK" if ok else "MOJIBAKE"); sys.exit(0 if ok else 1)' \
+            || { echo "UTF-8 assertion FAILED (mojibake in API output)"; exit 1; }
 
           docker stop syslogserver-test
           docker rm syslogserver-test
