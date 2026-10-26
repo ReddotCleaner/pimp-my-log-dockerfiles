@@ -76,6 +76,12 @@ jobs:
           docker exec syslogserver-test grep -q "UDP test from host" /var/log/net/syslog.log \
             || { echo "UDP line NOT ingested"; docker logs syslogserver-test; exit 1; }
 
+          # UTF-8 regression (mbstring): non-ASCII must be stored and served unmangled
+          printf '<14>Oct 27 04:00:02 win-val cn: 为新登录分配了特殊权限\n' > /dev/tcp/127.0.0.1/1514
+          sleep 2
+          docker exec syslogserver-test grep -q '为新登录' /var/log/net/syslog.log \
+            || { echo "UTF-8 line NOT stored correctly"; docker exec syslogserver-test od -c /var/log/net/syslog.log; exit 1; }
+
           # web UI
           code=""
           for i in $(seq 1 20); do
@@ -105,6 +111,8 @@ jobs:
             http://127.0.0.1:18080/inc/getlog.pml.php)
           echo "getlog: $(echo "$resp" | head -c 200)"
           echo "$resp" | grep -q '"count":[1-9]' || { echo "PimpMyLog parsed 0 lines"; docker logs syslogserver-test; exit 1; }
+          echo "$resp" | grep -q '为新登录' || { echo "UTF-8 mangled by PimpMyLog (mojibake)"; echo "$resp" | head -c 400; exit 1; }
+          if echo "$resp" | grep -q 'ä¸º'; then echo "mojibake detected in API output"; exit 1; fi
 
           docker stop syslogserver-test
           docker rm syslogserver-test

@@ -130,6 +130,15 @@ login `302`, and that PimpMyLog actually parses the ingested lines (`count > 0`)
 
 ## Notes
 
+- **Encoding / non-ASCII logs.** Log lines are stored and served as UTF-8. The image installs **`php8.3-mbstring`**
+  on purpose: it is *not* a dependency of `php8.3-fpm`/`php8.3-cli`, and without it PimpMyLog's fallback shim makes
+  `mb_check_encoding()` always return `false`, so `LogParser` runs `utf8_encode()` over **every** line and turns
+  correct UTF-8 into mojibake (`为新登录` → `ä¸ºæ°ç»å½`). The build now fails if mbstring is missing, and CI sends a
+  Chinese line and asserts it comes back unmangled. If your client sends GBK/CP936 instead of UTF-8 the bytes are
+  written as-is and will look wrong — fix it on the client (see the NXLog note below).
+- **`$MaxMessageSize 64k`** in `rsyslog.conf`: the rsyslog default is 8 KiB, which truncates long Windows event blocks
+  (4624/4672 detail) and can cut a multi-byte character in half. Truncated lines are scrubbed with
+  `iconv('UTF-8','UTF-8//IGNORE')` instead of being mojibaked wholesale.
 - **PimpMyLog on PHP 8.** PimpMyLog 1.7.14 (2017) calls `get_magic_quotes_gpc()` and `each()` — both removed
   in PHP 8.0, both a fatal error on PHP 8.3. They live in one dead `if ( get_magic_quotes_gpc() )` block, so the
   Dockerfile guards that block with `false`; no live code path is touched. Built with `php -l` assertions.
@@ -175,6 +184,9 @@ docker run -d --name syslogserver --restart unless-stopped \
 - 挂载 `/var/log/net` 时，宿主目录要给容器内的 `syslog:adm`（**uid 102 / gid 4**）：`chown -R 102:4 /srv/syslog`。
 - `SYSLOG_PASSWORD` **只在第一次启动生效**（用户写进 `config.auth.user.php`），之后改环境变量不会改密码；密码至少 6 位。
 - 日志时间看起来偏 8 小时，是 `config.user.php` 里 `USER_TIME_ZONE` 默认 `Europe/Paris`，改成 `Asia/Shanghai` 即可。
+- **中文/非 ASCII 日志不会乱码**：镜像特意装了 `php8.3-mbstring`（`php8.3-fpm`/`php8.3-cli` **不依赖**它）。缺了它，PimpMyLog 的兜底 `mb_check_encoding()` 恒为 false，`LogParser` 会对每行跑 `utf8_encode()`，中文就全变成 `ä¸ºæ°ç»å½` 这种双编码。构建时和 CI 里都有中文断言。
+- 客户端（NXLog/rsyslog）必须发 **UTF-8**；如果发 GBK/CP936，服务器只按字节原样存，页面上就会显示错乱 —— 那是客户端编码设置的问题，不是服务端。
+- `rsyslog.conf` 里 `$MaxMessageSize 64k`：Windows 4624/4672 这类长事件超过默认 8 KiB 会被截断，甚至把一个中文字符切成两半。
 - 镜像公开可拉，不需要 `docker login`。
 
 **自测**：

@@ -3,8 +3,14 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y git net-tools vim nginx rsyslog supervisor php8.3-fpm php8.3-cli apache2-utils \
+    && apt-get install -y git net-tools vim nginx rsyslog supervisor php8.3-fpm php8.3-cli php8.3-mbstring apache2-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# mbstring is NOT pulled in by php8.3-fpm/-cli. Without it PimpMyLog's fallback shim
+# makes mb_check_encoding() always return false, so LogParser runs utf8_encode() over
+# every line and turns correct UTF-8 (e.g. Chinese) into mojibake. Fail the build
+# instead of shipping a logging server that mangles non-ASCII logs.
+RUN php -r 'exit(extension_loaded("mbstring") && mb_check_encoding("为新登录","UTF-8") ? 0 : 1);'
 
 RUN sed -i -e 's/listen\ =\ 127.0.0.1:9000/listen\ =\ \/run\/php\/php8.3-fpm.sock/' /etc/php/8.3/fpm/pool.d/www.conf
 RUN sed -i '1idaemon off;' /etc/nginx/nginx.conf
@@ -27,7 +33,14 @@ RUN sed -i 's/^variables_order =.*/variables_order = "GPCSE"/' /etc/php/8.3/cli/
 # is dead code and guarding it with `false` removes both fatals at once.
 RUN sed -i 's|if ( get_magic_quotes_gpc() )|if ( false ) /* disabled: magic quotes removed in PHP 8 */|' /var/www/inc/global.inc.php \
     && grep -q 'disabled: magic quotes removed in PHP 8' /var/www/inc/global.inc.php \
-    && ! grep -q 'if ( get_magic_quotes_gpc() )' /var/www/inc/global.inc.php \
+    && ! grep -q 'if ( get_magic_quotes_gpc() )' /var/www/inc/global.inc.php
+
+# A log line that is not valid UTF-8 (rsyslog can cut a multi-byte char when a
+# message exceeds MaxMessageSize) used to be pushed through utf8_encode(), which
+# mojibakes the WHOLE line. Drop only the invalid bytes instead.
+RUN sed -i 's|? utf8_encode( \$line ) :|? iconv( "UTF-8" , "UTF-8//IGNORE" , $line ) :|' /var/www/inc/classes/LogParser.php \
+    && grep -q 'iconv( "UTF-8" , "UTF-8//IGNORE"' /var/www/inc/classes/LogParser.php \
+    && php -l /var/www/inc/classes/LogParser.php \
     && php -l /var/www/inc/global.inc.php \
     && php -l /var/www/index.php
 
