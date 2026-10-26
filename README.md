@@ -101,6 +101,19 @@ printf '<14>Oct 27 05:00:00 myhost test: hello over TCP\n' > /dev/tcp/192.168.31
 printf '<14>Oct 27 05:00:01 myhost test: hello over UDP\n' | nc -u -w1 192.168.31.5 514
 ```
 
+### Publishing to Docker Hub (optional)
+
+The workflow can mirror every successful build to Docker Hub as
+`docker.io/<your-user>/pimpmylog-syslogserver` **without rebuilding** (it copies the GHCR manifest with
+`docker buildx imagetools create`). It stays disabled until you add:
+
+| where | name | value |
+|---|---|---|
+| Settings → Secrets and variables → Actions → **Variables** | `DOCKERHUB_USERNAME` | your Docker Hub account name (not secret) |
+| Settings → Secrets and variables → Actions → **Secrets** | `DOCKERHUB_TOKEN` | a Docker Hub **access token** with *Read & Write* (Account settings → Security → New Access Token) |
+
+As long as `DOCKERHUB_USERNAME` is unset the `mirror-dockerhub` job is skipped and the run stays green.
+
 ## Build it yourself
 
 ```bash
